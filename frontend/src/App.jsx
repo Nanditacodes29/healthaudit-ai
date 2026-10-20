@@ -299,9 +299,41 @@ const handleAnchor = async () => {
 
       <form className="claim-form" onSubmit={handleSubmit}>
         <section className="form-section">
+<<<<<<< HEAD
           <h2>About you</h2>
           <div className="field-row">
             <label>
+=======
+          <h2>About you</h2><div className="field-row">
+  <label>
+    Patient ID
+    <input
+      type="text"
+      value={form.patientId}
+      onChange={(e) => set('patientId', e.target.value)}
+      placeholder="e.g. PAT-1001"
+      required
+    />
+  </label>
+
+  <label>
+    Claim ID
+    <input
+      type="text"
+      value={form.claimId}
+      onChange={(e) => set('claimId', e.target.value)}
+      placeholder="e.g. CLM-2026-001"
+      required
+    />
+  </label>
+</div>
+          
+            <label>
+ 
+  
+</label>
+            <label>
+>>>>>>> a6f3177 (Polish HealthAudit UI and add patient identifiers)
               Full name
               <input type="text" value={form.name} onChange={(e) => set('name', e.target.value)} required />
             </label>
@@ -316,7 +348,7 @@ const handleAnchor = async () => {
                 <option value="2">Female</option>
               </select>
             </label>
-          </div>
+          
         </section>
 
         <section className="form-section">
