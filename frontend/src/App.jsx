@@ -3,7 +3,8 @@ import { useState } from 'react';
 import axios from 'axios';
 import './App.css';
 
-const API_BASE = 'https://healthaudit-ai.onrender.com';
+const API_BASE =
+  import.meta.env.VITE_API_URL || 'https://healthaudit-ai.onrender.com';
 
 const CONDITIONS = [
   { key: 'alzheimer', label: "Alzheimer's / Dementia", severity: 2 },
@@ -190,7 +191,7 @@ function readableFeatureName(feature) {
   const nameMap = {
     numeric__total_outpatient_claims: 'Number of outpatient visits',
     numeric__total_inpatient_payment_amt_log: 'Hospital care cost',
-    numeric__total_inpatient_days_log: 'Days spent in hospital',
+    numeric__total_inpatient_days_log: 'Length of hospital stay',
     numeric__total_outpatient_payment_amt_log: 'Outpatient care cost',
     numeric__distinct_inpatient_diagnosis_codes:
       'Number of health issues found during hospital stay',
@@ -203,7 +204,24 @@ function readableFeatureName(feature) {
     numeric__age: 'Age',
   };
 
-  if (nameMap[feature]) return nameMap[feature];
+  // SHAP factors arrive as "numeric__<name>"; recourse suggestions arrive as "<name>".
+  const prefixed = feature.startsWith('numeric__')
+    ? feature
+    : `numeric__${feature}`;
+
+  if (nameMap[prefixed]) return nameMap[prefixed];
+
+  const extraNames = {
+    MEDREIMB_IP: 'Hospital care cost',
+    MEDREIMB_OP: 'Outpatient care cost',
+    total_inpatient_claims: 'Number of hospital stays',
+    total_inpatient_primary_payer_amt_log:
+      'Hospital costs paid by other insurance',
+    total_outpatient_primary_payer_amt_log:
+      'Outpatient costs paid by other insurance',
+  };
+
+  if (extraNames[feature]) return extraNames[feature];
 
   return feature
     .replace(/^numeric__/, '')
@@ -223,7 +241,7 @@ function buildPlainReason(result) {
 
   const clauses = factors.map((factor) => {
     const name = readableFeatureName(factor.feature).toLowerCase();
-    return `${name} contributed to the model's assessment`;
+    return `the ${name}`;
   });
 
   let clauseText;
@@ -236,7 +254,36 @@ function buildPlainReason(result) {
     clauseText = `${clauses.slice(0, -1).join(', ')}, and ${clauses[clauses.length - 1]}`;
   }
 
-  return `The model's assessment was influenced by ${clauseText}. This explanation describes model associations and does not establish that a claim is valid or invalid.`;
+  return `The model's assessment was influenced mainly by ${clauseText}. This explanation describes model associations and does not establish that a claim is valid or invalid.`;
+}
+
+// Recourse values come back in the model's units (log-scaled days, raw dollars).
+// Convert them to something a person can read.
+function formatRecourseValue(feature, value) {
+  const name = feature.replace(/^numeric__/, '');
+  const number = Number(value);
+
+  if (Number.isNaN(number)) return String(value);
+
+  const dollars = (amount) =>
+    `$${Math.round(amount).toLocaleString('en-US')}`;
+
+  if (name.endsWith('_days_log')) {
+    const days = Math.round(Math.expm1(number));
+    return `${days} day${days === 1 ? '' : 's'}`;
+  }
+
+  if (name.endsWith('_amt_log')) return dollars(Math.expm1(number));
+
+  if (name === 'cost_per_claim' || /^(MEDREIMB|BENRES|PPPYMT)_/.test(name)) {
+    return dollars(number);
+  }
+
+  if (name.startsWith('total_') || name.startsWith('distinct_')) {
+    return String(Math.round(number));
+  }
+
+  return String(Math.round(number * 10) / 10);
 }
 
 function buildPlainRecourse(recourse) {
@@ -256,16 +303,21 @@ function buildPlainRecourse(recourse) {
 
   const parts = counterfactuals.map((counterfactual, index) => {
     const changes = (counterfactual.changes || [])
-      .map(
-        (change) =>
-          `${readableFeatureName(change.feature)} changing from ${change.from_value} to ${change.to_value}`
-      )
-      .join(', ');
+      .map((change) => {
+        const verb =
+          Number(change.to_value) < Number(change.from_value)
+            ? 'reduce'
+            : 'change';
+        const name = readableFeatureName(change.feature).toLowerCase();
 
-    return `Option ${index + 1}: ${changes || 'Review the suggested alternative.'}`;
+        return `${verb} the ${name} from ${formatRecourseValue(change.feature, change.from_value)} to ${formatRecourseValue(change.feature, change.to_value)}`;
+      })
+      .join(' and ');
+
+    return `Option ${index + 1}: ${changes || 'review the suggested alternative'}.`;
   });
 
-  return `Potential model-generated alternatives for review: ${parts.join(' — ')}. These are suggestions for human review, not guarantees of approval.`;
+  return `Potential model-generated alternatives for review. ${parts.join(' ')} These are suggestions for human review, not guarantees of approval.`;
 }
 
 function App() {
@@ -380,7 +432,9 @@ function App() {
           ? detail.map((item) => item.msg).join(', ')
           : typeof detail === 'string'
             ? detail
-            : 'We could not reach the claim service. Check the backend and request fields.'
+            : typeof detail?.message === 'string'
+              ? detail.message
+              : 'We could not reach the claim service. Check the backend and request fields.'
       );
     } finally {
       setLoading(false);
